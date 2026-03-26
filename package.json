@@ -1,0 +1,17 @@
+{
+  "name": "kejoletts-backend",
+  "version": "1.0.0",
+  "description": "Secure backend API for Text‑to‑Speech synthesis",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Andile Sizophila Mchunu",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/text-to-speech": "^5.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.0",
+    "express": "^4.18.2"
+  }
+}

@@ -1,29 +1,37 @@
-# Use official Node.js LTS image with Debian for apt-get
-FROM node:18-bullseye
-
-# Install Python and pip for any Python dependencies
-RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
+# ---------- Build Stage ----------
+FROM node:18-alpine AS builder
 
 # Set working directory
 WORKDIR /app
 
-# Copy package.json and package-lock.json if present
-COPY package*.json ./
+# Install production dependencies only
+COPY package.json ./
+RUN npm install --production
 
-# Install Node.js dependencies
-RUN npm ci --only=production
+# Copy application source code (including front‑end files)
+COPY . ./
 
-# Install Python dependencies if requirements.txt exists
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+# ---------- Runtime Stage ----------
+FROM node:18-alpine
 
-# Copy the rest of the application code
-COPY . .
+# Create a non‑root user for security
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Expose the port the server runs on (default 3000, adjust if needed)
-EXPOSE 3000
+WORKDIR /app
 
-# Define environment variable for production
+# Copy built artifacts from the builder stage
+COPY --from=builder /app .
+
+# Change ownership to the non‑root user
+RUN chown -R appuser:appgroup /app
+
+# Switch to non‑root user
+USER appuser
+
+# Expose ports: 3000 for the API server, 80 for static front‑end (if served via a reverse proxy)
+EXPOSE 3000 80
+
+# Set environment to production
 ENV NODE_ENV=production
 
 # Start the application

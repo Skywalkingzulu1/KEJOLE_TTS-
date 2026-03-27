@@ -1,25 +1,22 @@
-# Use the official Node.js LTS image as the base
-FROM node:18-alpine
+# Use an official Node runtime as a parent image
+FROM node:18-alpine AS base
 
 # Set the working directory inside the container
 WORKDIR /app
 
-# Copy package.json (and package-lock.json if present) to the working directory
+# Copy package.json and package-lock.json (if present) first to leverage Docker cache
 COPY package.json ./
-# If a package-lock.json exists in the repo, uncomment the next line to copy it as well
+# If a package-lock.json exists, uncomment the next line
 # COPY package-lock.json ./
 
-# Install only production dependencies
+# Install Node.js dependencies
 RUN npm install --production
 
-# Copy the rest of the application source code into the container
+# Copy the rest of the application source code
 COPY . .
 
-# Expose the port that the Node.js server listens on (default 3000, adjust if needed)
+# Expose the port that the server will run on (adjust if your server uses a different port)
 EXPOSE 3000
-
-# Set environment to production for optimal performance
-ENV NODE_ENV=production
 
 # Define the command to run the application
 CMD ["npm", "start"]

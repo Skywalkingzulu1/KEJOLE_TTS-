@@ -1,22 +1,19 @@
-# Use an official Node runtime as a parent image
 FROM node:18-alpine AS base
-
-# Set the working directory inside the container
 WORKDIR /app
 
-# Copy package.json and package-lock.json (if present) first to leverage Docker cache
+# Install production dependencies only
 COPY package.json ./
-# If a package-lock.json exists, uncomment the next line
-# COPY package-lock.json ./
+RUN npm ci --only=production
 
-# Install Node.js dependencies
-RUN npm install --production
+# Copy application source
+COPY . ./
 
-# Copy the rest of the application source code
-COPY . .
-
-# Expose the port that the server will run on (adjust if your server uses a different port)
+# Expose the port the server runs on (default 3000 as per typical Express apps)
 EXPOSE 3000
 
-# Define the command to run the application
+# Use a non‑root user for security
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+USER appuser
+
+# Start the server
 CMD ["npm", "start"]

@@ -1,23 +1,23 @@
-# Use the official Node.js LTS image as the base
-FROM node:18-alpine AS builder
+FROM node:18-bullseye
 
-# Set the working directory inside the container
 WORKDIR /app
 
-# Copy package definition files and install only production dependencies
+# Install Node.js dependencies
 COPY package.json ./
-# If a package-lock.json exists it will be copied as well (optional)
-# COPY package-lock.json ./
-RUN npm ci --only=production
+RUN npm install
 
-# Copy the rest of the application source code (server, front‑end, etc.)
+# Install Python and Python dependencies (if needed)
+COPY requirements.txt ./
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip && \
+    pip3 install --no-cache-dir -r requirements.txt && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy the rest of the application code
 COPY . ./
 
-# Expose the port that the Express server listens on (default 3000)
+# Expose the port the server runs on (adjust if different)
 EXPOSE 3000
-
-# Set environment to production for Node
-ENV NODE_ENV=production
 
 # Start the application
 CMD ["npm", "start"]

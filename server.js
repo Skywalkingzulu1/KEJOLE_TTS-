@@ -1,73 +1,96 @@
-require('dotenv').config();
+// server.js
+// Express backend for Google Cloud Text-to-Speech synthesis
+// Author: Andile Sizophila Mchunu
 
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { TextToSpeechClient } = require('@google-cloud/text-to-speech');
 
 const app = express();
+const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Rate limiting: 60 requests per minute per IP
+// Rate limiting: max 100 requests per 15 minutes per IP
 const limiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 60,
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
 });
 app.use(limiter);
 
-// Simple API‑key authentication
-const API_KEY = process.env.API_KEY || 'changeme';
-function authMiddleware(req, res, next) {
-  const key = req.header('x-api-key');
-  if (!key || key !== API_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  next();
-}
+// Initialize Google Cloud TTS client
+const ttsClient = new TextToSpeechClient();
 
-// POST /api/tts – synthesize speech
-app.post('/api/tts', authMiddleware, async (req, res) => {
-  const { text } = req.body;
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok' });
+});
 
-  if (!text || typeof text !== 'string') {
-    return res.status(400).json({ error: 'Invalid request: "text" field is required.' });
-  }
-
-  const client = new TextToSpeechClient();
-
-  const request = {
-    input: { text },
-    voice: { languageCode: 'en-US', ssmlGender: 'NEUTRAL' },
-    audioConfig: { audioEncoding: 'MP3' },
-  };
-
+/**
+ * POST /synthesize
+ * Body JSON:
+ * {
+ *   "text": "Hello world",
+ *   "languageCode": "en-US",          // optional, default en-US
+ *   "voiceName": "en-US-Wavenet-D",   // optional
+ *   "ssmlGender": "MALE"               // optional: MALE, FEMALE, NEUTRAL, SSML_VOICE_GENDER_UNSPECIFIED
+ * }
+ *
+ * Returns:
+ * {
+ *   "audioContent": "<base64-encoded audio>"
+ * }
+ */
+app.post('/synthesize', async (req, res) => {
   try {
-    const [response] = await client.synthesizeSpeech(request);
-    const audioContent = response.audioContent; // Buffer
+    const {
+      text,
+      languageCode = 'en-US',
+      voiceName,
+      ssmlGender = 'NEUTRAL',
+    } = req.body;
 
-    res.set({
-      'Content-Type': 'audio/mpeg',
-      'Content-Disposition': 'attachment; filename="speech.mp3"',
-    });
-    res.send(audioContent);
-  } catch (err) {
-    console.error('Text‑to‑Speech error:', err);
-    res.status(500).json({ error: 'Failed to synthesize speech.' });
+    if (!text) {
+      return res.status(400).json({ error: 'Missing required field: text' });
+    }
+
+    // Build the request
+    const request = {
+      input: { text },
+      // Select the language and SSML voice gender (optional voice name)
+      voice: {
+        languageCode,
+        ssmlGender,
+      },
+      audioConfig: {
+        audioEncoding: 'MP3',
+      },
+    };
+
+    if (voiceName) {
+      request.voice.name = voiceName;
+    }
+
+    // Perform the Text-to-Speech request
+    const [response] = await ttsClient.synthesizeSpeech(request);
+
+    // response.audioContent is a Buffer
+    const audioBase64 = response.audioContent.toString('base64');
+
+    res.json({ audioContent: audioBase64 });
+  } catch (error) {
+    console.error('Error synthesizing speech:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Global error handler (fallback)
-app.use((err, req, res, next) => {
-  console.error('Unexpected error:', err);
-  res.status(500).json({ error: 'Internal server error.' });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Kejoletts TTS service listening on port ${PORT}`);
+// Start server
+app.listen(port, () => {
+  console.log(`Kejoletts TTS backend listening on port ${port}`);
 });

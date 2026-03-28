@@ -1,22 +1,22 @@
-# Use official Node.js LTS image
-FROM node:18-alpine
+# Use the official Node.js LTS image as the base
+FROM node:18-alpine AS builder
 
-# Set working directory
+# Set the working directory inside the container
 WORKDIR /app
 
-# Copy package.json (and package-lock.json if present)
+# Copy package definition files and install only production dependencies
 COPY package.json ./
-
-# Install production dependencies
+# If a package-lock.json exists it will be copied as well (optional)
+# COPY package-lock.json ./
 RUN npm ci --only=production
 
-# Copy the rest of the application code
+# Copy the rest of the application source code (server, front‑end, etc.)
 COPY . ./
 
-# Expose the port the app runs on (default for Express is 3000)
+# Expose the port that the Express server listens on (default 3000)
 EXPOSE 3000
 
-# Set environment to production
+# Set environment to production for Node
 ENV NODE_ENV=production
 
 # Start the application

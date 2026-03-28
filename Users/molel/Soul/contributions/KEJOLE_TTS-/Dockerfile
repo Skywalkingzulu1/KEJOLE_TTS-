@@ -1,32 +1,20 @@
-FROM node:18-alpine AS builder
+FROM node:18-alpine
 
 # Set working directory
 WORKDIR /app
 
-# Copy package files and install production dependencies
+# Copy package.json and install dependencies
 COPY package.json ./
-COPY package-lock.json ./
-RUN npm ci --only=production
+RUN npm install --production
 
-# Copy the rest of the application source code
-COPY . .
+# Copy the rest of the application code
+COPY . ./
 
-# ---------- Runtime Stage ----------
-FROM node:18-alpine
-
-WORKDIR /app
-
-# Copy node_modules and application files from the builder stage
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app .
-
-# Set a default port; can be overridden at runtime via environment variable
-ENV PORT=3000
+# Expose the port the server runs on (default 3000, adjust if different)
 EXPOSE 3000
 
-# Create a non‑root user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-USER appuser
+# Define environment variable for production
+ENV NODE_ENV=production
 
-# Start the application
+# Start the server
 CMD ["npm", "start"]

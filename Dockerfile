@@ -1,18 +1,31 @@
-# Use the official Node.js LTS image (Alpine for a small footprint)
-FROM node:18-alpine
+# Use official Node LTS image for the build stage
+FROM node:18-alpine AS builder
 
-# Set the working directory inside the container
+# Set working directory
 WORKDIR /app
 
-# Copy package definition files and install only production dependencies
-COPY package.json package-lock.json* ./
+# Copy package definition and install only production dependencies
+COPY package.json ./
 RUN npm ci --only=production
 
-# Copy the rest of the application source code
-COPY . .
+# Copy the rest of the application (backend code, front‑end assets, etc.)
+COPY . ./
 
-# Expose the port that the Express server listens on (default 3000)
+# -------------------------------------------------
+# Production image
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Bring in the built artifacts and installed modules from the builder stage
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app ./
+
+# Expose the port the server listens on (default defined in server.js, commonly 3000)
 EXPOSE 3000
 
-# Define the command to run the application
-CMD ["npm", "run", "start"]
+# Set environment to production
+ENV NODE_ENV=production
+
+# Start the application
+CMD ["npm", "start"]

@@ -17,8 +17,7 @@
 ---
 
 ## Project Overview
-**Kejoletts TTS** is a secure, web‑based Text‑to‑Speech (TTS) service powered by Google Cloud Text‑to‑Speech.  
-It provides:
+**Kejoletts TTS** is a secure, web‑based Text‑to‑Speech (TTS) service powered by Google Cloud Text‑to‑Speech. It provides:
 
 - A clean, responsive web UI for end‑users.
 - A RESTful API for programmatic synthesis.
@@ -67,7 +66,6 @@ pip install -r requirements.txt
 
 ### Docker Deployment
 A ready‑to‑use Dockerfile is provided.
-
 ```bash
 # Build the image
 docker build -t kejoletts-tts:latest .
@@ -80,7 +78,6 @@ docker run -d \
   --name kejoletts \
   kejoletts-tts:latest
 ```
-
 The service will be reachable at `http://localhost:3000`.
 
 ---
@@ -88,9 +85,7 @@ The service will be reachable at `http://localhost:3000`.
 ## Usage
 
 ### Web UI
-Open a browser and navigate to the server root (e.g., `http://localhost:3000`).  
-The UI allows you to:
-
+Open a browser and navigate to the server root (e.g., `http://localhost:3000`). The UI allows you to:
 1. Select a language & voice.
 2. Enter text to synthesize.
 3. Play or download the generated audio.
@@ -106,47 +101,51 @@ All endpoints are prefixed with `/api/v1`.
 
 **Example using `curl`:**
 ```bash
+# Synthesize speech
 curl -X POST http://localhost:3000/api/v1/synthesize \
   -H "Content-Type: application/json" \
-  -d '{"text":"Hello from Kejoletts!","languageCode":"en-US","voiceName":"en-US-Wavenet-D"}' \
-  --output output.mp3
+  -d '{"text":"Hello world","languageCode":"en-US","voiceName":"en-US-Wavenet-D"}'
+
+# List voices
+curl http://localhost:3000/api/v1/voices
+
+# Health check
+curl http://localhost:3000/api/v1/health
 ```
 
 ---
 
 ## Configuration
-Configuration is handled via environment variables (loaded with `dotenv`). Create a `.env` file at the project root:
+Create a `.env` file in the project root (you can copy the provided `.env.example`). The following variables are recognised:
 
 ```dotenv
-# Server
+# Port on which the Express server will listen
 PORT=3000
 
-# Google Cloud
-GOOGLE_APPLICATION_CREDENTIALS=./creds.json   # Path inside the container or local dev env
+# Path to Google Cloud service‑account JSON (used by the @google-cloud/text-to-speech library)
+GOOGLE_APPLICATION_CREDENTIALS=./creds.json
 
-# Rate limiting (requests per minute)
+# JWT secret for any future authentication endpoints (currently unused but kept for extensibility)
+JWT_SECRET=your‑strong‑secret
+
+# Rate‑limit configuration (requests per minute per IP)
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=60
 ```
-
-You can also override any of these variables at runtime (e.g., `docker run -e PORT=8080 ...`).
+Make sure the service‑account JSON file is either placed at the path referenced above or mounted into the Docker container as shown in the Docker run command.
 
 ---
 
 ## Contributing
-We welcome contributions! Please follow these steps:
-
+Contributions are welcome! Please follow these steps:
 1. Fork the repository.
-2. Create a feature branch: `git checkout -b feature/your-feature`.
-3. Write code and tests.
-4. Ensure all tests pass: `npm test` (if added) and `pytest`.
-5. Submit a Pull Request with a clear description of changes.
+2. Create a feature branch (`git checkout -b feature/your-feature`).
+3. Make your changes and ensure the code passes existing tests (`npm test` for Node, `pytest` for Python).
+4. Open a Pull Request with a clear description of the changes.
 
-**Code style:**  
-- JavaScript: Standard ESLint rules (run `npm run lint`).  
-- Python: PEP 8 (run `flake8`).
+Please adhere to the existing coding style and include appropriate documentation for any new functionality.
 
 ---
 
 ## License
-This project is licensed under the **MIT License**. See the `LICENSE` file for details.
+This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.

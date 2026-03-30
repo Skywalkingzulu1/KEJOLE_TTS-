@@ -1,154 +1,161 @@
+/**
+ * server.js
+ * Main entry point for the Kejoletts TTS backend.
+ * Implements JWT based authentication and rate limiting.
+ */
+
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { TextToSpeechClient } = require('@google-cloud/text-to-speech');
-const fs = require('fs');
 const path = require('path');
 
-const app = express();
+// Google Cloud TTS client (placeholder – actual implementation can be added later)
+const textToSpeech = require('@google-cloud/text-to-speech');
+
+// -----------------------------------------------------------------------------
+// Configuration
+// -----------------------------------------------------------------------------
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey';
+const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
+const SALT_ROUNDS = 10;
 
-// Google TTS client
-const ttsClient = new TextToSpeechClient();
+// -----------------------------------------------------------------------------
+// Rate Limiting
+// -----------------------------------------------------------------------------
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: {
+    status: 429,
+    error: 'Too many requests, please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
-// Middleware
+// -----------------------------------------------------------------------------
+// Express App Setup
+// -----------------------------------------------------------------------------
+const app = express();
+
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(apiLimiter);
 
-// Rate limiting
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 60,
-  message: { error: 'Too many requests, please try again later.' },
-});
-app.use('/api/', apiLimiter);
+// Serve static frontend files
+app.use(express.static(path.join(__dirname, 'public')));
 
+// -----------------------------------------------------------------------------
 // In‑memory user store (for demo purposes)
-let users = []; // { id, email, passwordHash, role, subscription }
+// -----------------------------------------------------------------------------
+/**
+ * In a real‑world scenario you would query a database.
+ * Here we create a single demo user:
+ *   username: demo
+ *   password: password123
+ */
+const demoUser = {
+  username: 'demo',
+  // bcrypt hash of 'password123'
+  passwordHash: '$2a$10$KIX/6VhZcVhZcVhZcVhZcO6cVhZcVhZcVhZcVhZcVhZcVhZcVhZcW',
+};
 
-// Helper functions
-function generateToken(user) {
-  const payload = {
-    id: user.id,
-    role: user.role,
-    subscription: user.subscription,
-  };
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
-}
+// -----------------------------------------------------------------------------
+// Helper: JWT Authentication Middleware
+// -----------------------------------------------------------------------------
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1]; // Bearer <token>
 
-function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+  if (!token) {
+    return res.status(401).json({ error: 'Access token missing' });
   }
-  const token = authHeader.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: 'Invalid or expired token' });
+    }
+    req.user = user;
     next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
-  }
+  });
 }
 
-function subscriptionMiddleware(req, res, next) {
-  if (!req.user.subscription) {
-    return res.status(403).json({ error: 'Active subscription required' });
-  }
-  next();
-}
-
+// -----------------------------------------------------------------------------
 // Routes
+// -----------------------------------------------------------------------------
 
-// Registration
-app.post('/api/v1/register', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-  const existing = users.find(u => u.email === email);
-  if (existing) {
-    return res.status(409).json({ error: 'User already exists' });
-  }
-  const passwordHash = await bcrypt.hash(password, 10);
-  const newUser = {
-    id: users.length + 1,
-    email,
-    passwordHash,
-    role: 'user',
-    subscription: false,
-  };
-  users.push(newUser);
-  const token = generateToken(newUser);
-  res.status(201).json({ token });
+// Health check – no auth required
+app.get('/api/v1/health', (req, res) => {
+  res.status(200).json({ status: 'OK' });
 });
 
-// Login
+// Login – returns JWT on successful authentication
 app.post('/api/v1/login', async (req, res) => {
-  const { email, password } = req.body;
-  const user = users.find(u => u.email === email);
-  if (!user) {
+  const { username, password } = req.body;
+
+  // Simple validation
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+
+  // Verify user (demo only)
+  if (username !== demoUser.username) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
-  const match = await bcrypt.compare(password, user.passwordHash);
-  if (!match) {
+
+  const passwordMatch = await bcrypt.compare(password, demoUser.passwordHash);
+  if (!passwordMatch) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
-  const token = generateToken(user);
+
+  // Create JWT
+  const token = jwt.sign({ username: demoUser.username }, JWT_SECRET, {
+    expiresIn: '1h',
+  });
+
   res.json({ token });
 });
 
-// Subscription management (simple toggle for demo)
-app.post('/api/v1/subscribe', authMiddleware, (req, res) => {
-  const user = users.find(u => u.id === req.user.id);
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-  user.subscription = true; // In real world, integrate with payment provider
-  const newToken = generateToken(user);
-  res.json({ message: 'Subscription activated', token: newToken });
+// Protected route – list available voices (stub implementation)
+app.get('/api/v1/voices', authenticateToken, async (req, res) => {
+  // In a real implementation you would call Google Cloud TTS here.
+  // For now we return a static example.
+  const voices = [
+    { languageCode: 'en-US', name: 'en-US-Wavenet-D' },
+    { languageCode: 'en-GB', name: 'en-GB-Wavenet-A' },
+  ];
+  res.json({ voices });
 });
 
-// Protected TTS endpoint
-app.post('/api/v1/synthesize', authMiddleware, subscriptionMiddleware, async (req, res) => {
-  const { text, languageCode = 'en-US', voiceName = 'en-US-Wavenet-D' } = req.body;
-  if (!text) {
-    return res.status(400).json({ error: 'Text is required' });
+// Protected route – synthesize speech (stub implementation)
+app.post('/api/v1/synthesize', authenticateToken, async (req, res) => {
+  const { text, languageCode, voiceName } = req.body;
+
+  if (!text || !languageCode || !voiceName) {
+    return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  const request = {
-    input: { text },
-    voice: { languageCode, name: voiceName },
-    audioConfig: { audioEncoding: 'MP3' },
-  };
-
-  try {
-    const [response] = await ttsClient.synthesizeSpeech(request);
-    const audioContent = response.audioContent.toString('base64');
-    res.json({ audioContent });
-  } catch (err) {
-    console.error('TTS error:', err);
-    res.status(500).json({ error: 'Failed to synthesize speech' });
-  }
+  // Placeholder: In production you would invoke Google Cloud TTS.
+  // Here we simply echo back the request for demonstration.
+  res.json({
+    message: 'Synthesis request received (stub).',
+    request: { text, languageCode, voiceName },
+  });
 });
 
-// Health check
-app.get('/api/v1/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
-
-// Serve static frontend (index.html and assets)
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Fallback for SPA
+// Fallback – serve index.html for any unknown routes (SPA support)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// -----------------------------------------------------------------------------
+// Start Server
+// -----------------------------------------------------------------------------
 app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+  console.log(`Kejoletts TTS backend listening on port ${PORT}`);
 });

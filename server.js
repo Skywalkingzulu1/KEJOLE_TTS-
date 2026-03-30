@@ -1,120 +1,120 @@
-// server.js
-// Main backend for Kejoletts TTS with JWT authentication and rate limiting
+/**
+ * Kejoletts TTS Backend
+ * Implements secure API key authentication, rate limiting, and Google Cloud TTS integration.
+ */
 
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const jwt = require('jsonwebtoken');
 const { TextToSpeechClient } = require('@google-cloud/text-to-speech');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret';
 
-// Initialise Google Cloud TTS client (expects GOOGLE_APPLICATION_CREDENTIALS env var)
-const ttsClient = new TextToSpeechClient();
-
-// Middleware
+// ---------- Middleware ----------
 app.use(cors());
 app.use(express.json());
 
-// ---------- JWT Authentication Middleware ----------
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[0] === 'Bearer' ? authHeader.split(' ')[1] : null;
-  if (!token) return res.status(401).json({ error: 'Missing token' });
+// Load allowed API keys from environment (comma‑separated)
+const API_KEYS = (process.env.API_KEYS || '').split(',').map(k => k.trim()).filter(k => k);
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid token' });
-    req.user = user; // attach decoded payload
-    next();
-  });
+// Simple API‑key authentication middleware
+function authenticateApiKey(req, res, next) {
+  const authHeader = req.headers['authorization'] || req.headers['x-api-key'];
+  let token = null;
+
+  if (authHeader) {
+    // Support "Bearer <key>" or raw key
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.slice(7).trim();
+    } else {
+      token = authHeader.trim();
+    }
+  }
+
+  if (!token || !API_KEYS.includes(token)) {
+    return res.status(401).json({ error: 'Invalid or missing API key' });
+  }
+
+  // Attach the key to request for downstream use (e.g., per‑key rate limiting)
+  req.apiKey = token;
+  next();
 }
 
-// ---------- Rate Limiting Middleware ----------
-// Limit each user (or IP if unauthenticated) to 100 requests per 15 minutes
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
-  keyGenerator: (req) => {
-    // Prefer authenticated user ID, fallback to IP address
-    return (req.user && req.user.id) ? req.user.id : req.ip;
-  },
+// Rate limiter – 60 requests per minute per API key
+const limiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 60,
+  keyGenerator: (req) => req.apiKey || req.ip,
   handler: (req, res) => {
     res.status(429).json({ error: 'Too many requests, please try again later.' });
   },
 });
 
-// Apply rate limiter and auth to all API routes under /api/v1
-app.use('/api/v1', authenticateToken, apiLimiter);
+// Apply authentication and rate limiting to all /api/v1 routes
+app.use('/api/v1', authenticateApiKey, limiter);
 
-// ---------- Helper: Issue JWT (simple login) ----------
-// In a real deployment replace with proper user store & password hashing.
-app.post('/api/v1/login', (req, res) => {
-  const { username, password } = req.body;
-  // Very basic static credentials for demo purposes
-  if (username === 'admin' && password === 'password') {
-    const payload = { id: username, role: 'admin' };
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '12h' });
-    return res.json({ token });
-  }
-  res.status(401).json({ error: 'Invalid credentials' });
+// ---------- Google Cloud TTS Client ----------
+const ttsClient = new TextToSpeechClient();
+
+// ---------- Routes ----------
+app.get('/api/v1/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ---------- API Endpoints ----------
-
-// Health check (no auth needed, expose separately)
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// List available voices
 app.get('/api/v1/voices', async (req, res) => {
   try {
     const [result] = await ttsClient.listVoices({});
-    const voices = result.voices || [];
+    const voices = result.voices.map(v => ({
+      name: v.name,
+      languageCodes: v.languageCodes,
+      ssmlGender: v.ssmlGender,
+      naturalSampleRateHertz: v.naturalSampleRateHertz,
+    }));
     res.json({ voices });
   } catch (err) {
-    console.error('Error listing voices:', err);
+    console.error('Error fetching voices:', err);
     res.status(500).json({ error: 'Failed to retrieve voices' });
   }
 });
 
-// Synthesize speech
 app.post('/api/v1/synthesize', async (req, res) => {
   const { text, languageCode = 'en-US', voiceName } = req.body;
+
   if (!text) {
     return res.status(400).json({ error: 'Missing required field: text' });
   }
 
   const request = {
     input: { text },
-    // Select the language and voice. If voiceName not provided, let API pick default.
-    voice: {
-      languageCode,
-      name: voiceName,
-    },
+    // Use provided voiceName or default to first matching voice
+    voice: voiceName
+      ? { languageCode, name: voiceName }
+      : { languageCode, ssmlGender: 'NEUTRAL' },
     audioConfig: { audioEncoding: 'MP3' },
   };
 
   try {
     const [response] = await ttsClient.synthesizeSpeech(request);
-    const audioContent = response.audioContent.toString('base64');
-    // Log usage for tracking (could be persisted to DB in real app)
-    console.log(`User ${req.user.id} synthesized text of length ${text.length}`);
-    res.json({ audioContent });
+    const audioContent = response.audioContent;
+
+    // Return audio as base64 string
+    const base64Audio = Buffer.from(audioContent).toString('base64');
+    res.json({ audioContent: base64Audio });
   } catch (err) {
-    console.error('Synthesis error:', err);
+    console.error('TTS synthesis error:', err);
     res.status(500).json({ error: 'Speech synthesis failed' });
   }
 });
 
-// Fallback route for undefined endpoints
-app.use((req, res) => {
-  res.status(404).json({ error: 'Endpoint not found' });
-});
+// ---------- Static Frontend ----------
+app.use(express.static(path.join(__dirname, 'public')));
 
+// ---------- Start Server ----------
 app.listen(PORT, () => {
-  console.log(`Kejoletts TTS backend listening on port ${PORT}`);
+  console.log(`Kejoletts TTS server running on port ${PORT}`);
 });
